@@ -1,0 +1,14 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Local test outputs & uploads
+test_*.xlsx
+temp_*.pdf
+uploads/
+exports/
+
+# Keep secrets local (Set your GOOGLE_API_KEY in Streamlit Cloud Secrets instead)
+.env

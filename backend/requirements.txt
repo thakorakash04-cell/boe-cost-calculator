@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+python-multipart
+pydantic
+pydantic-settings
+anthropic
+openpyxl
+msoffcrypto-tool
+pdfplumber
+pypdf
+pillow
+python-dotenv
+pandas
+jinja2
