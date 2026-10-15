@@ -1,4 +1,5 @@
 import os
+import tempfile
 import streamlit as st
 import pandas as pd
 import json
@@ -12,6 +13,12 @@ from calculation_engine import compute_boe_costing
 from excel_generator import populate_boe_excel
 
 st.set_page_config(page_title="BOE Cost Calculator", layout="wide", page_icon="📄")
+
+from workspace_auth import require_workspace, require_admin, admin_download
+from workspace_ui import data_table, workspace_theme
+workspace_theme()
+workspace_store, workspace_actor, workspace_identity = require_workspace()
+is_workspace_admin = workspace_identity["role"] == "admin"
 
 # ── Custom Styling ──
 st.markdown("""
@@ -38,25 +45,28 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-st.title("📄 BOE Cost Calculation & Automation Tool")
-st.markdown("Upload a **Bill of Entry PDF** → AI extracts data automatically → Compute landed costs → Download filled Excel.")
+workspace_theme()
 
-# ── Sidebar ──
-st.sidebar.header("⚙️ Settings")
-api_key = st.sidebar.text_input(
-    "Google AI Studio API Key (FREE)",
-    type="password",
-    value=os.environ.get("GOOGLE_API_KEY", ""),
-    help="Free from https://aistudio.google.com/apikey"
-)
-st.sidebar.markdown("---")
-st.sidebar.markdown("**Get your FREE API Key:**")
-st.sidebar.markdown("1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey)")
-st.sidebar.markdown("2. Sign in with your Google account")
-st.sidebar.markdown('3. Click **"Create API Key"**')
-st.sidebar.markdown("4. Copy & paste it above")
-st.sidebar.markdown("---")
-st.sidebar.info("Free tier: **15 requests/minute, 1M tokens/day** — enough for hundreds of BOEs daily!")
+st.title("📄 BOE Cost Calculation & Automation Tool")
+st.markdown("Upload a **Bill of Entry PDF** → Review extracted data → Compute landed costs." if is_workspace_admin else "View the latest saved landed-cost calculation.")
+
+if is_workspace_admin:
+    # ── Sidebar ──
+    st.sidebar.header("⚙️ Settings")
+    api_key = st.sidebar.text_input(
+        "Google AI Studio API Key (FREE)",
+        type="password",
+        value=os.environ.get("GOOGLE_API_KEY", ""),
+        help="Free from https://aistudio.google.com/apikey"
+    )
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Get your FREE API Key:**")
+    st.sidebar.markdown("1. Go to [aistudio.google.com/apikey](https://aistudio.google.com/apikey)")
+    st.sidebar.markdown("2. Sign in with your Google account")
+    st.sidebar.markdown('3. Click **"Create API Key"**')
+    st.sidebar.markdown("4. Copy & paste it above")
+    st.sidebar.markdown("---")
+    st.sidebar.info("Free tier: **15 requests/minute, 1M tokens/day** — enough for hundreds of BOEs daily!")
 
 # ── Session State ──
 if "extracted_data" not in st.session_state:
@@ -68,10 +78,17 @@ if "excel_bytes" not in st.session_state:
 if "mode" not in st.session_state:
     st.session_state.mode = None
 
+current_workspace_result = workspace_store.get_dataset(workspace_actor)
+if current_workspace_result and (not is_workspace_admin or st.session_state.computed_results is None):
+    st.session_state.computed_results = current_workspace_result["data"]["results"]
+    st.caption("Latest shared calculation · saved by " + current_workspace_result["uploaded_by"])
+if not is_workspace_admin and not current_workspace_result:
+    st.info("The administrator has not saved a calculation yet.")
+
 # ══════════════════════════════════════════════════════════════
 # MODE SELECTION
 # ══════════════════════════════════════════════════════════════
-if st.session_state.mode is None and st.session_state.extracted_data is None:
+if is_workspace_admin and st.session_state.mode is None and st.session_state.extracted_data is None:
     st.markdown("---")
     st.subheader("How would you like to enter BOE data?")
 
@@ -108,7 +125,7 @@ if st.session_state.mode is None and st.session_state.extracted_data is None:
 # ══════════════════════════════════════════════════════════════
 # AI MODE: Upload & Extract
 # ══════════════════════════════════════════════════════════════
-if st.session_state.mode == "ai" and st.session_state.extracted_data is None:
+if is_workspace_admin and st.session_state.mode == "ai" and st.session_state.extracted_data is None:
     st.markdown("---")
     if st.button("← Back to Mode Selection"):
         st.session_state.mode = None
@@ -131,8 +148,9 @@ if st.session_state.mode == "ai" and st.session_state.extracted_data is None:
                 )
             else:
                 with st.spinner("🔍 AI is reading your BOE document... This may take 15-30 seconds."):
-                    temp_pdf = f"temp_{uploaded_file.name}"
-                    with open(temp_pdf, "wb") as f:
+                    require_admin(workspace_store, workspace_actor)
+                    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                        temp_pdf = f.name
                         f.write(uploaded_file.getbuffer())
 
                     try:
@@ -157,7 +175,7 @@ if st.session_state.mode == "ai" and st.session_state.extracted_data is None:
 # ══════════════════════════════════════════════════════════════
 # STEP 1 & 2: Edit Header + Items (Both modes land here)
 # ══════════════════════════════════════════════════════════════
-if st.session_state.extracted_data:
+if is_workspace_admin and st.session_state.extracted_data:
     st.markdown("---")
 
     if st.button("🔄 Start Over (New BOE)"):
@@ -239,9 +257,11 @@ if st.session_state.extracted_data:
             st.error("⚠️ Please add at least one material item")
         else:
             try:
+                require_admin(workspace_store, workspace_actor)
                 results = compute_boe_costing(header_payload, items_payload)
                 st.session_state.computed_results = results
                 excel_bytes = populate_boe_excel(header_payload, items_payload)
+                workspace_store.save_dataset(workspace_actor, "BOE calculation", {"results": results})
                 st.session_state.excel_bytes = excel_bytes
                 st.success("✅ Calculations complete! Scroll down for results & download.")
                 st.rerun()
@@ -278,19 +298,21 @@ if st.session_state.computed_results:
         "unit_cost_actual_with_duty_gst": st.column_config.NumberColumn("Unit Cost + Duty + GST (₹)", format="₹ %.2f"),
         "actual_cost_excl_gst": st.column_config.NumberColumn("Actual Cost Excl GST (₹)", format="₹ %.2f"),
     }
-    st.dataframe(
-        df_res[list(display_result_cols.keys())],
-        column_config=display_result_cols,
-        use_container_width=True,
-        hide_index=True
-    )
+    result_labels = {
+        "sr_no":"Sr.No", "material_name":"Material", "item_assess_value":"Assess Value (₹)",
+        "item_bcd":"BCD (₹)", "item_sws":"SWS (₹)", "item_igst":"IGST (₹)",
+        "item_total_duty":"Total Duty (₹)", "unit_cost_quoted_inr":"Unit Cost Quoted (₹)",
+        "unit_cost_actual_with_duty_gst":"Unit Cost + Duty + GST (₹)", "actual_cost_excl_gst":"Actual Cost Excl GST (₹)"}
+    data_table(df_res.rename(columns=result_labels), "boe-results", "Calculated Line Items")
+    data_table(pd.DataFrame([head_res]), "boe-summary", "Customs Valuation & Landed Cost Summary")
 
     st.markdown("---")
-    st.subheader("4️⃣ Download Completed Excel")
-    st.caption("This is your original `BOE Cost Calculation Form.xlsx` with all input cells filled and all formulas active in Excel.")
+    if is_workspace_admin:
+        st.subheader("4️⃣ Download Completed Excel")
+        st.caption("This is your original `BOE Cost Calculation Form.xlsx` with all input cells filled and all formulas active in Excel.")
 
-    if st.session_state.excel_bytes:
-        st.download_button(
+    if is_workspace_admin and st.session_state.excel_bytes:
+        admin_download(
             label="⬇️ Download BOE_Cost_Calculation_Form_Filled.xlsx",
             data=st.session_state.excel_bytes,
             file_name="BOE_Cost_Calculation_Form_Filled.xlsx",

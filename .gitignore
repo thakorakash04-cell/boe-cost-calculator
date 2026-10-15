@@ -12,3 +12,9 @@ exports/
 
 # Keep secrets local (Set your GOOGLE_API_KEY in Streamlit Cloud Secrets instead)
 .env
+
+node_modules/
+__pycache__/
+*.db
+.streamlit/secrets.toml
+.env
