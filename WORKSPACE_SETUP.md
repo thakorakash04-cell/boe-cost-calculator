@@ -9,3 +9,5 @@ Tables reuse Stock-Planning's React grid: per-column text/value/numeric filters,
 Viewers have no file download buttons or data export toolbar. Visible information can still be copied or captured. Administrators retain existing app downloads. The prebuilt `workspace_dist` directory is included, so Streamlit needs no Node build step. To rebuild after frontend changes: `cd workspace_frontend`, `npm install`, `npm run check`, `npm run build`.
 
 BOE only: administrator uploads, manual entry and calculation remain available. Each successful calculation saves the latest shared result to PostgreSQL for viewers and after restarts. Excel generation stays admin-only. Research searches remain available to both roles; existing FDA/CDSCO loading and matching rules remain unchanged. The optional research API/Zoho integration keeps its existing separate authentication.
+
+Startup imports now use an app-specific account package. After deployment, reboot the Streamlit app once to clear legacy helper modules. Existing Secrets, accounts and PostgreSQL table names are unchanged. Root workspace_auth/workspace_store modules remain compatibility imports.

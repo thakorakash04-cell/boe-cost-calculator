@@ -15,7 +15,7 @@ from excel_generator import populate_boe_excel
 
 st.set_page_config(page_title="BOE Cost Calculator", layout="wide", page_icon="📄")
 
-from workspace_auth import require_workspace, require_permission, admin_download, can
+from boe_accounts.auth import require_workspace, require_permission, admin_download, can
 from workspace_ui import data_table, workspace_theme
 workspace_theme()
 workspace_store, workspace_actor, workspace_identity = require_workspace()
