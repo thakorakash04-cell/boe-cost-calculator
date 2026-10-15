@@ -1,5 +1,6 @@
 import os
 import tempfile
+import base64
 import streamlit as st
 import pandas as pd
 import json
@@ -14,11 +15,11 @@ from excel_generator import populate_boe_excel
 
 st.set_page_config(page_title="BOE Cost Calculator", layout="wide", page_icon="📄")
 
-from workspace_auth import require_workspace, require_admin, admin_download
+from workspace_auth import require_workspace, require_permission, admin_download, can
 from workspace_ui import data_table, workspace_theme
 workspace_theme()
 workspace_store, workspace_actor, workspace_identity = require_workspace()
-is_workspace_admin = workspace_identity["role"] == "admin"
+can_update_data = can("update_data")
 
 # ── Custom Styling ──
 st.markdown("""
@@ -48,9 +49,9 @@ st.markdown("""
 workspace_theme()
 
 st.title("📄 BOE Cost Calculation & Automation Tool")
-st.markdown("Upload a **Bill of Entry PDF** → Review extracted data → Compute landed costs." if is_workspace_admin else "View the latest saved landed-cost calculation.")
+st.markdown("Upload a **Bill of Entry PDF** → Review extracted data → Compute landed costs." if can_update_data else "View the latest saved landed-cost calculation.")
 
-if is_workspace_admin:
+if can_update_data:
     # ── Sidebar ──
     st.sidebar.header("⚙️ Settings")
     api_key = st.sidebar.text_input(
@@ -79,16 +80,18 @@ if "mode" not in st.session_state:
     st.session_state.mode = None
 
 current_workspace_result = workspace_store.get_dataset(workspace_actor)
-if current_workspace_result and (not is_workspace_admin or st.session_state.computed_results is None):
+if current_workspace_result and (not can_update_data or st.session_state.computed_results is None):
     st.session_state.computed_results = current_workspace_result["data"]["results"]
+    if can("download") and current_workspace_result["data"].get("excel_base64"):
+        st.session_state.excel_bytes=base64.b64decode(current_workspace_result["data"]["excel_base64"])
     st.caption("Latest shared calculation · saved by " + current_workspace_result["uploaded_by"])
-if not is_workspace_admin and not current_workspace_result:
+if not can_update_data and not current_workspace_result:
     st.info("The administrator has not saved a calculation yet.")
 
 # ══════════════════════════════════════════════════════════════
 # MODE SELECTION
 # ══════════════════════════════════════════════════════════════
-if is_workspace_admin and st.session_state.mode is None and st.session_state.extracted_data is None:
+if can_update_data and st.session_state.mode is None and st.session_state.extracted_data is None:
     st.markdown("---")
     st.subheader("How would you like to enter BOE data?")
 
@@ -125,7 +128,7 @@ if is_workspace_admin and st.session_state.mode is None and st.session_state.ext
 # ══════════════════════════════════════════════════════════════
 # AI MODE: Upload & Extract
 # ══════════════════════════════════════════════════════════════
-if is_workspace_admin and st.session_state.mode == "ai" and st.session_state.extracted_data is None:
+if can_update_data and st.session_state.mode == "ai" and st.session_state.extracted_data is None:
     st.markdown("---")
     if st.button("← Back to Mode Selection"):
         st.session_state.mode = None
@@ -148,7 +151,7 @@ if is_workspace_admin and st.session_state.mode == "ai" and st.session_state.ext
                 )
             else:
                 with st.spinner("🔍 AI is reading your BOE document... This may take 15-30 seconds."):
-                    require_admin(workspace_store, workspace_actor)
+                    require_permission(workspace_store, workspace_actor,"update_data")
                     with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
                         temp_pdf = f.name
                         f.write(uploaded_file.getbuffer())
@@ -175,7 +178,7 @@ if is_workspace_admin and st.session_state.mode == "ai" and st.session_state.ext
 # ══════════════════════════════════════════════════════════════
 # STEP 1 & 2: Edit Header + Items (Both modes land here)
 # ══════════════════════════════════════════════════════════════
-if is_workspace_admin and st.session_state.extracted_data:
+if can_update_data and st.session_state.extracted_data:
     st.markdown("---")
 
     if st.button("🔄 Start Over (New BOE)"):
@@ -257,11 +260,11 @@ if is_workspace_admin and st.session_state.extracted_data:
             st.error("⚠️ Please add at least one material item")
         else:
             try:
-                require_admin(workspace_store, workspace_actor)
+                require_permission(workspace_store, workspace_actor,"update_data")
                 results = compute_boe_costing(header_payload, items_payload)
                 st.session_state.computed_results = results
                 excel_bytes = populate_boe_excel(header_payload, items_payload)
-                workspace_store.save_dataset(workspace_actor, "BOE calculation", {"results": results})
+                workspace_store.save_dataset(workspace_actor, "BOE calculation", {"results": results,"excel_base64":base64.b64encode(excel_bytes).decode()})
                 st.session_state.excel_bytes = excel_bytes
                 st.success("✅ Calculations complete! Scroll down for results & download.")
                 st.rerun()
@@ -307,11 +310,11 @@ if st.session_state.computed_results:
     data_table(pd.DataFrame([head_res]), "boe-summary", "Customs Valuation & Landed Cost Summary")
 
     st.markdown("---")
-    if is_workspace_admin:
+    if can("download"):
         st.subheader("4️⃣ Download Completed Excel")
         st.caption("This is your original `BOE Cost Calculation Form.xlsx` with all input cells filled and all formulas active in Excel.")
 
-    if is_workspace_admin and st.session_state.excel_bytes:
+    if can("download") and st.session_state.excel_bytes:
         admin_download(
             label="⬇️ Download BOE_Cost_Calculation_Form_Filled.xlsx",
             data=st.session_state.excel_bytes,
